@@ -215,9 +215,42 @@ OPCODE_FIELDS: Dict[str, set] = {
     "data_hidelist": {"LIST"},
     "data_variable": {"VARIABLE"},
     "data_listcontents": {"LIST"},
+    "operator_mathop": {"OPERATOR"},
 }
 
 CONTROL_BLOCKS = {"control_forever", "control_repeat", "control_repeat_until", "control_if", "control_if_else"}
+
+MATH_OPERATORS = {
+    "abs",
+    "floor",
+    "ceiling",
+    "sqrt",
+    "sin",
+    "cos",
+    "tan",
+    "asin",
+    "acos",
+    "atan",
+    "ln",
+    "log",
+    "e ^",
+    "10 ^",
+}
+
+# Layout tuning constants for auto-arranging top-level stacks
+BLOCK_BASE_WIDTH = 220
+BLOCK_BASE_HEIGHT = 40
+BLOCK_LABEL_CHAR_WIDTH = 6
+STACK_GAP = 12
+BRANCH_GAP = 12
+CLAUSE_GAP = 16
+INDENT_WIDTH = 28
+ARRANGE_GAP_X = 80
+ARRANGE_GAP_Y = 40
+TARGET_RATIO = 0.5
+RATIO_WEIGHT = 2.5
+# Bracket (C-shaped) blocks have thinner end caps; scale their height to fit.
+BRACKET_HEIGHT_SCALE = 1.66
 
 
 def safe_name(name: str, fallback: str = "item") -> str:
@@ -322,9 +355,101 @@ def coerce_number(val: str) -> Optional[float]:
         return None
 
 
-def build_input_value(value: str, input_name: str, broadcast_ids: Dict[str, str]) -> Any:
-    inner = strip_wrappers(value)
+def parse_inline_expression(
+    value: str,
+    procedure_defs: Dict[str, Dict[str, Any]],
+    local_vars: Dict[str, str],
+    global_vars: Dict[str, str],
+    local_lists: Dict[str, str],
+    global_lists: Dict[str, str],
+    broadcast_ids: Dict[str, str],
+) -> Optional["ParsedNode"]:
+    # Fast-path: mathop often appears without surrounding parentheses
+    math_match = re.match(r"^\[([^\]]+)\] of \((.+)\)$", value)
+    if math_match:
+        op_token = math_match.group(1).strip()
+        if op_token.endswith(" v"):
+            op_token = op_token[:-2].strip()
+        if op_token in MATH_OPERATORS:
+            opcode = "operator_mathop"
+            groups = {"OPERATOR": op_token, "NUM": math_match.group(2).strip()}
+    else:
+        opcode, groups = match_opcode_line(value)
+    if not opcode and not (value.startswith("(") and value.endswith(")")):
+        # Try matching math/reporters that often omit outer parentheses in inline text
+        opcode, groups = match_opcode_line(f"({value})")
+
+    # Disambiguate sensing_of vs mathop when the property token is a math operator
+    if opcode == "sensing_of":
+        prop = groups.get("PROPERTY", "").strip()
+        if prop.endswith(" v"):
+            prop = prop[:-2].strip()
+        obj = groups.get("OBJECT", "")
+        if prop in MATH_OPERATORS:
+            opcode = "operator_mathop"
+            groups = {"OPERATOR": prop, "NUM": obj}
+    if not opcode:
+        return None
+
+    # Avoid turning control/event/procedure-definition into inline nodes; inline should be reporter/command blocks
+    if opcode in CONTROL_BLOCKS or opcode.startswith("event_") or opcode == "procedures_definition":
+        return None
+
+    # Skip menu-only patterns (no literals) that would greedily swallow any text, e.g. pen menus
+    fmt = OPCODE_MAP.get(opcode, "")
+    literal_len = sum(len(lit) for lit, _, _, _ in string.Formatter().parse(fmt) if lit)
+    if literal_len == 0 or opcode.endswith("_menu") or opcode.startswith("pen_menu"):
+        return None
+
+    inputs: Dict[str, Any] = {}
+    fields: Dict[str, Any] = {}
+
+    for name, captured in groups.items():
+        if name in OPCODE_FIELDS.get(opcode, set()):
+            fields[name] = resolve_field_value(
+                name,
+                captured,
+                local_vars,
+                global_vars,
+                local_lists,
+                global_lists,
+                broadcast_ids,
+            )
+        else:
+            inputs[name] = build_input_value(
+                captured,
+                name,
+                broadcast_ids,
+                True,
+                procedure_defs,
+                local_vars,
+                global_vars,
+                local_lists,
+                global_lists,
+            )
+
+    return ParsedNode(opcode, inputs=inputs, fields=fields)
+
+
+def build_input_value(
+    value: str,
+    input_name: str,
+    broadcast_ids: Dict[str, str],
+    allow_inline: bool,
+    procedure_defs: Dict[str, Dict[str, Any]],
+    local_vars: Dict[str, str],
+    global_vars: Dict[str, str],
+    local_lists: Dict[str, str],
+    global_lists: Dict[str, str],
+) -> Any:
+    raw = value.strip()
+    inner = strip_wrappers(raw)
     num_val = coerce_number(inner)
+
+    # Treat empty reporter/boolean placeholders (e.g., "<>", "()", "[]") as intentionally missing
+    # inputs so we omit them from the block JSON instead of emitting an unusable literal string.
+    if raw in {"<>", "[]", "()"} or (inner == "" and raw in {"", "()"}):
+        return None
 
     if "BROADCAST" in input_name:
         bid = broadcast_ids.setdefault(inner, gen_id("broadcast"))
@@ -332,6 +457,35 @@ def build_input_value(value: str, input_name: str, broadcast_ids: Dict[str, str]
 
     if num_val is not None:
         return [1, [4, num_val]]
+
+    if allow_inline:
+        inline_node = parse_inline_expression(
+            raw,
+            procedure_defs,
+            local_vars,
+            global_vars,
+            local_lists,
+            global_lists,
+            broadcast_ids,
+        ) or parse_inline_expression(
+            inner,
+            procedure_defs,
+            local_vars,
+            global_vars,
+            local_lists,
+            global_lists,
+            broadcast_ids,
+        )
+        if inline_node:
+            return inline_node
+
+    if inner in local_vars or inner in global_vars:
+        vid = resolve_variable_id(inner, local_vars, global_vars)
+        return [3, [12, inner, vid], [10, ""]]
+
+    if inner in local_lists or inner in global_lists:
+        lid = resolve_list_id(inner, local_lists, global_lists)
+        return [3, [13, inner, lid], [10, ""]]
 
     return [1, [10, inner]]
 
@@ -443,7 +597,17 @@ def parse_line_to_node(
             for idx, val in enumerate(match.groups()):
                 if idx < len(info["arg_ids"]):
                     arg_id = info["arg_ids"][idx]
-                    node.inputs[arg_id] = build_input_value(val, arg_id, broadcast_ids)
+                    node.inputs[arg_id] = build_input_value(
+                        val,
+                        arg_id,
+                        broadcast_ids,
+                        True,
+                        procedure_defs,
+                        local_vars,
+                        global_vars,
+                        local_lists,
+                        global_lists,
+                    )
             return node
 
     opcode, groups = match_opcode_line(line)
@@ -465,7 +629,17 @@ def parse_line_to_node(
                 broadcast_ids,
             )
         else:
-            inputs[name] = build_input_value(value, name, broadcast_ids)
+            inputs[name] = build_input_value(
+                value,
+                name,
+                broadcast_ids,
+                True,
+                procedure_defs,
+                local_vars,
+                global_vars,
+                local_lists,
+                global_lists,
+            )
 
     return ParsedNode(opcode, inputs=inputs, fields=fields)
 
@@ -490,6 +664,8 @@ def parse_block_list(
             break
         if text == "end":
             idx += 1
+            if indent == 0:
+                continue  # ignore stray top-level end lines
             break
         if text == "else":
             hit_else = True
@@ -560,11 +736,34 @@ def emit_blocks(
             "opcode": node.opcode,
             "next": None,
             "parent": prev_id if prev_id else parent_id,
-            "inputs": dict(node.inputs),
+            "inputs": {},
             "fields": dict(node.fields),
             "shadow": False,
             "topLevel": False,
         }
+
+
+        # Resolve inputs, emitting inline reporter blocks when necessary
+        for input_name, raw_val in (node.inputs or {}).items():
+            if raw_val is None:
+                continue
+            if isinstance(raw_val, ParsedNode):
+                if raw_val.opcode in {"data_variable", "data_listcontents"} and not raw_val.children and not raw_val.children2:
+                    fields = raw_val.fields
+                    if raw_val.opcode == "data_variable":
+                        name, vid = fields.get("VARIABLE", ["", None])
+                        block_entry["inputs"][input_name] = [3, [12, name, vid], [10, ""]]
+                    else:
+                        name, lid = fields.get("LIST", ["", None])
+                        block_entry["inputs"][input_name] = [3, [13, name, lid], [10, ""]]
+                else:
+                    nested_first, _ = emit_blocks([raw_val], blocks, block_id, False, x, y)
+                    if nested_first:
+                        block_entry["inputs"][input_name] = [3, nested_first, [10, ""]]
+                    else:
+                        block_entry["inputs"][input_name] = [1, [10, ""]]
+            else:
+                block_entry["inputs"][input_name] = raw_val
 
         if prev_id:
             blocks[prev_id]["next"] = block_id
@@ -623,6 +822,154 @@ def emit_blocks(
         prev_id = block_id
 
     return first_id, prev_id
+
+
+def _extract_stack_id(input_entry: Any) -> Optional[str]:
+    if not input_entry:
+        return None
+    if isinstance(input_entry, list) and len(input_entry) >= 2 and isinstance(input_entry[1], str):
+        return input_entry[1]
+    return None
+
+
+def _estimate_label_width(block: Dict[str, Any]) -> int:
+    opcode = block.get("opcode", "")
+    fmt = OPCODE_MAP.get(opcode, opcode)
+    label_text = re.sub(r"\{[^}]+\}", "", fmt)
+    return max(BLOCK_BASE_WIDTH, BLOCK_LABEL_CHAR_WIDTH * len(label_text) + 80)
+
+
+def _block_size(
+    block_id: str,
+    blocks: Dict[str, Dict[str, Any]],
+    stack_cache: Dict[str, Tuple[int, int]],
+    block_cache: Dict[str, Tuple[int, int]],
+) -> Tuple[int, int]:
+    if block_id in block_cache:
+        return block_cache[block_id]
+
+    block = blocks.get(block_id, {})
+    width = _estimate_label_width(block)
+    height = BLOCK_BASE_HEIGHT
+
+    inputs = block.get("inputs", {}) or {}
+
+    substack_id = _extract_stack_id(inputs.get("SUBSTACK") or inputs.get("substack"))
+    if substack_id:
+        child_w, child_h = _stack_size(substack_id, blocks, stack_cache, block_cache)
+        width = max(width, child_w + INDENT_WIDTH)
+        height += BRANCH_GAP + child_h
+
+    substack2_id = _extract_stack_id(inputs.get("SUBSTACK2") or inputs.get("substack2"))
+    if substack2_id:
+        child_w2, child_h2 = _stack_size(substack2_id, blocks, stack_cache, block_cache)
+        width = max(width, child_w2 + INDENT_WIDTH)
+        height += CLAUSE_GAP + child_h2
+
+    if block.get("opcode") in CONTROL_BLOCKS:
+        height = int(height * BRACKET_HEIGHT_SCALE)
+
+    block_cache[block_id] = (width, height)
+    return width, height
+
+
+def _stack_size(
+    start_id: str,
+    blocks: Dict[str, Dict[str, Any]],
+    stack_cache: Dict[str, Tuple[int, int]],
+    block_cache: Dict[str, Tuple[int, int]],
+) -> Tuple[int, int]:
+    if start_id in stack_cache:
+        return stack_cache[start_id]
+
+    total_height = 0
+    max_width = 0
+    current = start_id
+    visited: set = set()
+
+    while current and current not in visited:
+        visited.add(current)
+        block_width, block_height = _block_size(current, blocks, stack_cache, block_cache)
+        total_height += block_height
+        next_id = blocks.get(current, {}).get("next")
+        if next_id:
+            total_height += STACK_GAP
+        max_width = max(max_width, block_width)
+        current = next_id
+
+    stack_cache[start_id] = (max_width, total_height)
+    return max_width, total_height
+
+
+def auto_arrange_top_blocks(blocks: Dict[str, Dict[str, Any]]) -> None:
+    top_blocks = [bid for bid, blk in blocks.items() if blk.get("topLevel")]
+    if not top_blocks:
+        return
+
+    block_cache: Dict[str, Tuple[int, int]] = {}
+    stack_cache: Dict[str, Tuple[int, int]] = {}
+    sizes: List[Tuple[str, int, int, int]] = []
+
+    for order, bid in enumerate(top_blocks):
+        width, height = _stack_size(bid, blocks, stack_cache, block_cache)
+        sizes.append((bid, width, height, order))
+
+    best_layout: Optional[Tuple[float, List[List[Tuple[str, int, int, int]]], List[int], List[int], int, int]] = None
+    max_cols = max(1, min(len(sizes), 5))
+    script_gap = ARRANGE_GAP_Y * 3
+    script_gap_x = ARRANGE_GAP_X * 3
+
+    for cols in range(1, max_cols + 1):
+        columns: List[List[Tuple[str, int, int, int]]] = [[] for _ in range(cols)]
+        col_heights = [0 for _ in range(cols)]
+
+        for entry in sorted(sizes, key=lambda item: item[2], reverse=True):
+            bid, width, height, order = entry
+            target_col = min(range(cols), key=lambda idx: col_heights[idx])
+            if columns[target_col]:
+                col_heights[target_col] += script_gap
+            col_heights[target_col] += height
+            columns[target_col].append((bid, width, height, order))
+
+        col_widths = [max((item[1] for item in col), default=0) for col in columns]
+        total_width = sum(col_widths) + script_gap_x * (cols - 1)
+        total_height = max(col_heights) if col_heights else 0
+        ratio = total_width / total_height if total_height else 1.0
+        area = total_width * total_height
+        score = area * (1 + RATIO_WEIGHT * abs(ratio - TARGET_RATIO))
+
+        if best_layout is None or score < best_layout[0]:
+            best_layout = (score, columns, col_widths, col_heights, total_width, total_height)
+
+    if not best_layout:
+        return
+
+    _, chosen_columns, col_widths, col_heights, total_width, total_height = best_layout
+
+    # Normalize positions into a reasonable viewport
+    # Avoid vertically squashing tall layouts; overlapping stacks were caused by
+    # compressing everything into a 600px column height. Keep a constant scale
+    # so gaps stay roughly in line with real block sizes.
+    y_scale = 1.0
+    x_offset = 40
+    y_offset = 40
+
+    x = x_offset
+    for col_width, col_height, column in zip(col_widths, col_heights, chosen_columns):
+        y = y_offset
+        for bid, _, height, order in sorted(column, key=lambda item: item[3]):
+            blk = blocks.get(bid, {})
+            blk["x"] = x
+            blk["y"] = int(y)
+            y += (height + script_gap) * y_scale
+        x += col_width + script_gap_x
+
+
+def clear_block_positions(blocks: Dict[str, Dict[str, Any]]) -> None:
+    """Remove x/y coordinates so the editor can place stacks itself."""
+    for blk in blocks.values():
+        blk.pop("x", None)
+        blk.pop("y", None)
 
 
 def code_to_blocks(
@@ -1134,6 +1481,7 @@ def convert_folder_to_sb3(input_dir: str, output_path: str) -> None:
         {},
         broadcast_ids,
     )
+    auto_arrange_top_blocks(stage_blocks)
     stage_costumes, stage_assets = prepare_costumes(os.path.join(stage_dir, "Assets"))
     stage_sounds, stage_sound_assets = prepare_sounds(os.path.join(stage_dir, "Sounds"))
     assets_to_pack.extend(stage_assets)
@@ -1194,6 +1542,7 @@ def convert_folder_to_sb3(input_dir: str, output_path: str) -> None:
                 stage_list_ids,
                 broadcast_ids,
             )
+            auto_arrange_top_blocks(sprite_blocks)
 
             sprite_costumes, sprite_assets = prepare_costumes(os.path.join(sprite_dir, "Assets"))
             sprite_sounds, sprite_sound_assets = prepare_sounds(os.path.join(sprite_dir, "Sounds"))
@@ -1238,7 +1587,7 @@ def convert_folder_to_sb3(input_dir: str, output_path: str) -> None:
             "semver": "3.0.0",
             "vm": "0.2.0",
             "agent": "",
-            "platform": {"name": "TextScratch", "url": ""},
+            "platform": {"name":"TurboWarp","url":"https://turbowarp.org/"},
         },
     }
 

@@ -3,6 +3,10 @@
         {
             "name": "Sprite 2 only variable",
             "value": "This should be in sprite 2"
+        },
+        {
+            "name": "numeric variable",
+            "value": 0
         }
     ],
     "lists": []
