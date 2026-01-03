@@ -1,0 +1,7 @@
+when green flag clicked
+set [global variable v] to [This variable is global!]
+set [Sprite 1 only variable v] to [This should be in sprite 1]
+say [Hello from sprite 1!]
+
+define Example custom block #norefresh
+say [This is in a custom block!]

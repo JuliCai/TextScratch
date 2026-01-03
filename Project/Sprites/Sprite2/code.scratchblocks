@@ -1,0 +1,16 @@
+when green flag clicked
+set [Sprite 2 only variable v] to [This should be in sprite 2]
+say [Hello from sprite 2!]
+
+when I receive [example message! v]
+think [received example message!]
+
+define run without screen refresh custom block #norefresh
+repeat [10]
+    say [this runs really fast!]
+end
+
+define not run without screen refresh custom block
+repeat [10]
+    say [this will pause for one frame after every iteration.]
+end

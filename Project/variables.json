@@ -1,0 +1,22 @@
+{
+    "variables": [
+        {
+            "name": "global variable",
+            "value": "This variable is global!"
+        },
+        {
+            "name": "\u2601 example cloud variable",
+            "value": 0,
+            "cloud": true
+        }
+    ],
+    "lists": [
+        {
+            "name": "globallist",
+            "value": [
+                "item1",
+                "item2"
+            ]
+        }
+    ]
+}

@@ -1,0 +1,13 @@
+{
+    "position": {
+        "x": -70,
+        "y": 0
+    },
+    "size": 100,
+    "direction": 90,
+    "visible": true,
+    "rotationStyle": "all around",
+    "currentCostume": 0,
+    "draggable": false,
+    "volume": 100
+}

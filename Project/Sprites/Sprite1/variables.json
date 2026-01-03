@@ -1,0 +1,9 @@
+{
+    "variables": [
+        {
+            "name": "Sprite 1 only variable",
+            "value": "This should be in sprite 1"
+        }
+    ],
+    "lists": []
+}
