@@ -25,7 +25,7 @@ say [some filler code to waste space]
 if <([sin v] of (☁ example cloud variable)) = [1]> then
     say [Hello!]
 end
-if <> then
+if <<> or <>> then
     say [this will never run!]
 end
 hide list [globallist v]
