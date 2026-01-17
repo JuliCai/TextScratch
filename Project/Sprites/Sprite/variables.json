@@ -1,7 +1,7 @@
 {
     "variables": [
         {
-            "name": "my variable",
+            "name": "Local variable",
             "value": 0
         }
     ],

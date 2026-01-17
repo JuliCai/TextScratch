@@ -1,7 +1,188 @@
-when green flag clicked
-set [global variable v] to [This variable is global!]
-set [Sprite 1 only variable v] to [This should be in sprite 1]
-say [Hello from sprite 1!]
+move [10] steps
+turn right [15] degrees
+turn left [15] degrees
+go to [random position v]
+go to [mouse-pointer v]
+go to x: [0] y: [0]
+glide [1] secs to [random position v]
+glide [1] secs to [mouse-pointer v]
+glide [1] secs to x: [0] y: [0]
+point in direction [90]
+point towards [mouse-pointer v]
+point towards [Sprite v]
+change x by [10]
+set x to [0]
+change y by [10]
+set y to [0]
+if on edge, bounce
+set rotation style [left-right v]
+set rotation style [don't rotate v]
+set rotation style [all around v]
+say (x position)
+say (y position)
+say (direction)
+say [Hello!] for [2] seconds
+say [Hello!]
+think [Hmm...] for [2] seconds
+think [Hmm...]
+switch costume to [costume1 v]
+next costume
+switch backdrop to [backdrop1 v]
+next backdrop
+change size by [10]
+set size to [100] %
+change [COLOR v] effect by [25]
+set [COLOR v] effect to [0]
+clear graphic effects
+show
+hide
+go to [front v] layer
+go to [back v] layer
+go [forward v] [1] layers
+go [backward v] [1] layers
+say (costume [number v])
+say (costume [name v])
+say (backdrop [number v])
+say (backdrop [name v])
+say (size)
+play sound [Sound v] until done
+start sound [Sound v]
+stop all sounds
+change [PITCH v] effect by [10]
+set [PITCH v] effect to [100]
+clear sound effects
+change volume by [-10]
+set volume to [100] %
+say (volume)
 
-define Example custom block #norefresh
-say [This is in a custom block!]
+when green flag clicked
+
+when [space v] key pressed
+
+when this sprite clicked
+
+when backdrop switches to [backdrop1 v]
+
+when [LOUDNESS v] > [10]
+
+when I receive [message1 v]
+
+broadcast message1
+broadcast message1 and wait
+wait [1] seconds
+repeat [10]
+end
+
+forever
+end
+
+if <> then
+end
+if <> then
+else
+end
+wait until <>
+repeat until <>
+end
+while <>
+
+stop [all v]
+
+stop [this script v]
+
+stop [other scripts in sprite v]
+
+when I start as a clone
+create clone of [_myself_ v]
+delete this clone
+
+<touching [mouse-pointer v] ?>
+
+<touching color (#bbe899) ?>
+
+<color (#132fca) is touching (#7d8b32) ?>
+
+(distance to [mouse-pointer v])
+
+(distance to [Sprite v])
+
+ask [What's your name?] and wait
+
+(answer)
+
+<key [space v] pressed?>
+
+<mouse down?>
+
+(mouse x)
+
+(mouse y)
+
+set drag mode [draggable v]
+
+(loudness)
+
+(timer)
+
+reset timer
+
+([backdrop # v] of [_stage_ v])
+
+([x position v] of [Sprite v])
+
+([Local variable v] of [Sprite v])
+
+(current [YEAR v])
+
+(username)
+
+([] + [])
+
+([] - [])
+
+([] * [])
+
+([] / [])
+
+(pick random [1] to [10])
+
+<[] > [50]>
+
+<[] < [50]>
+
+<[] = [50]>
+
+<<> and <>>
+
+<<> or <>>
+
+<not <>>
+
+(join [apple ] [banana])
+
+(letter [1] of [apple])
+
+(length of [apple])
+
+<[apple] contains [a] ?>
+
+([] mod [])
+
+(round [])
+
+([abs v] of [])
+
+set [my variable v] to [0]
+change [my variable v] by [1]
+show variable [my variable v]
+hide variable [my variable v]
+
+erase all
+stamp
+pen down
+pen up
+set pen color to (#26ccbc)
+change pen (color v) by [10]
+set pen (color v) to [50]
+change pen size by [1]
+set pen size to [1]

@@ -5,6 +5,56 @@ from typing import Any, Dict, List
 from .opcodes import CONTROL_BLOCKS, OPCODE_MAP
 
 
+def humanize_touching_menu(value: str) -> str:
+    lowered = value.strip().lower().replace("_", " ").strip()
+    if lowered == "mouse":
+        return "mouse-pointer"
+    if lowered == "edge":
+        return "edge"
+    return value
+
+
+def humanize_distance_menu(value: str) -> str:
+    lowered = value.strip().lower().replace("_", " ").strip()
+    if lowered == "mouse":
+        return "mouse-pointer"
+    if lowered == "myself":
+        return "myself"
+    return value
+
+
+def humanize_goto_menu(value: str) -> str:
+    lowered = value.strip().lower().replace("_", " ").strip()
+    if lowered == "random":
+        return "random position"
+    if lowered == "mouse":
+        return "mouse-pointer"
+    return value
+
+
+def humanize_pointtowards_menu(value: str) -> str:
+    lowered = value.strip().lower().replace("_", " ").strip()
+    if lowered == "mouse":
+        return "mouse-pointer"
+    if lowered == "random":
+        return "random direction"
+    return value
+
+
+def humanize_of_object_menu(value: str) -> str:
+    lowered = value.strip().lower().replace("_", " ").strip()
+    if lowered == "stage":
+        return "_stage_"
+    return value
+
+
+def humanize_clone_menu(value: str) -> str:
+    lowered = value.strip().lower().replace("_", " ").strip()
+    if lowered == "myself":
+        return "_myself_"
+    return value
+
+
 def parse_input(input_data: Any, blocks: Dict[str, Dict[str, Any]]) -> str:
     if not input_data or len(input_data) < 2:
         return ""
@@ -61,6 +111,24 @@ def generate_block_code(block_id: str, blocks: Dict[str, Dict[str, Any]], indent
     for field_name, field_val in fields.items():
         args[field_name] = parse_field(field_val)
 
+    if opcode == "sensing_touchingobjectmenu" and "TOUCHINGOBJECTMENU" in args:
+        args["TOUCHINGOBJECTMENU"] = humanize_touching_menu(args["TOUCHINGOBJECTMENU"])
+
+    if opcode == "sensing_distancetomenu" and "DISTANCETOMENU" in args:
+        args["DISTANCETOMENU"] = humanize_distance_menu(args["DISTANCETOMENU"])
+
+    if opcode in ("motion_goto_menu", "motion_glideto_menu") and "TO" in args:
+        args["TO"] = humanize_goto_menu(args["TO"])
+
+    if opcode == "motion_pointtowards_menu" and "TOWARDS" in args:
+        args["TOWARDS"] = humanize_pointtowards_menu(args["TOWARDS"])
+
+    if opcode == "sensing_of_object_menu" and "OBJECT" in args:
+        args["OBJECT"] = humanize_of_object_menu(args["OBJECT"])
+
+    if opcode == "control_create_clone_of_menu" and "CLONE_OPTION" in args:
+        args["CLONE_OPTION"] = humanize_clone_menu(args["CLONE_OPTION"])
+
     if opcode == "procedures_definition":
         custom_block_id = inputs.get("custom_block", [None, None])[1]
         if custom_block_id and custom_block_id in blocks:
@@ -78,7 +146,7 @@ def generate_block_code(block_id: str, blocks: Dict[str, Dict[str, Any]], indent
             for idx, part in enumerate(parts):
                 def_str += part
                 if idx < len(argument_names):
-                    def_str += f"({argument_names[idx]})"
+                    def_str += f"{{{argument_names[idx]}}}"
             if warp_flag:
                 def_str += " #norefresh"
             return f"{indent}{def_str}\n"
@@ -107,7 +175,7 @@ def generate_block_code(block_id: str, blocks: Dict[str, Dict[str, Any]], indent
     try:
         required_keys = [fname for _, fname, _, _ in string.Formatter().parse(format_str) if fname]
         for key in required_keys:
-            if key not in args:
+            if key not in args or args[key] == "":
                 args[key] = "<>" if ("OPERAND" in key or "CONDITION" in key) else ""
         code = format_str.format(**args)
     except KeyError as exc:
@@ -143,10 +211,14 @@ def generate_block_code(block_id: str, blocks: Dict[str, Dict[str, Any]], indent
 
 def generate_target_code(target: Dict[str, Any]) -> str:
     blocks = target.get("blocks", {})
-    top_level = [bid for bid, blk in blocks.items() if blk.get("topLevel")]
+    top_level = [bid for bid, blk in blocks.items() if isinstance(blk, dict) and blk.get("topLevel")]
     top_level.sort(key=lambda bid: (blocks[bid].get("y", 0), blocks[bid].get("x", 0)))
 
     lines: List[str] = []
+    
+    # Generate code for topLevel blocks only.
+    # Zombie blocks (blocks with parent set but not actually referenced) are skipped
+    # as they don't appear in the Scratch editor and are orphaned/corrupted data.
     for start_id in top_level:
         current = start_id
         while current:

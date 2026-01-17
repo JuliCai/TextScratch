@@ -20,11 +20,14 @@ OPCODE_MAP: Dict[str, str] = {
     "motion_turnright": "turn right {DEGREES} degrees",
     "motion_turnleft": "turn left {DEGREES} degrees",
     "motion_goto": "go to {TO}",
+    "motion_goto_menu": "[{TO} v]",
     "motion_gotoxy": "go to x: {X} y: {Y}",
     "motion_glideto": "glide {SECS} secs to {TO}",
+    "motion_glideto_menu": "[{TO} v]",
     "motion_glidesecstoxy": "glide {SECS} secs to x: {X} y: {Y}",
     "motion_pointindirection": "point in direction {DIRECTION}",
     "motion_pointtowards": "point towards {TOWARDS}",
+    "motion_pointtowards_menu": "[{TOWARDS} v]",
     "motion_changexby": "change x by {DX}",
     "motion_setx": "set x to {X}",
     "motion_changeyby": "change y by {DY}",
@@ -40,6 +43,10 @@ OPCODE_MAP: Dict[str, str] = {
     "looks_switchcostumeto": "switch costume to {COSTUME}",
     "looks_nextcostume": "next costume",
     "looks_switchbackdropto": "switch backdrop to {BACKDROP}",
+    "looks_backdrops": "[{BACKDROP} v]",
+    "looks_costumenumbername": "(costume [{NUMBER_NAME} v])",
+    "looks_backdropnumbername": "(backdrop [{NUMBER_NAME} v])",
+    "looks_costume": "[{COSTUME} v]",
     "looks_nextbackdrop": "next backdrop",
     "looks_changesizeby": "change size by {CHANGE}",
     "looks_setsizeto": "set size to {SIZE} %",
@@ -50,6 +57,7 @@ OPCODE_MAP: Dict[str, str] = {
     "looks_hide": "hide",
     "looks_gotofrontback": "go to [{FRONT_BACK} v] layer",
     "looks_goforwardbackwardlayers": "go [{FORWARD_BACKWARD} v] {NUM} layers",
+    "looks_size": "(size)",
 
     # Sound
     "sound_playuntildone": "play sound {SOUND_MENU} until done",
@@ -59,6 +67,8 @@ OPCODE_MAP: Dict[str, str] = {
     "sound_seteffectto": "set [{EFFECT} v] effect to {VALUE}",
     "sound_changevolumeby": "change volume by {VOLUME}",
     "sound_setvolumeto": "set volume to {VOLUME} %",
+    "sound_cleareffects": "clear sound effects",
+    "sound_volume": "(volume)",
 
     # Pen
     "pen_clear": "erase all",
@@ -67,8 +77,10 @@ OPCODE_MAP: Dict[str, str] = {
     "pen_pendown": "pen down",
     "pen_setpenparamto": "set pen ({COLOR_PARAM} v) to {VALUE}",
     "pen_changepenparamby": "change pen ({COLOR_PARAM} v) by {VALUE}",
+    "pen_changePenColorParamBy": "change pen ({COLOR_PARAM} v) by {VALUE}",
     "pen_setpencolortocolor": "set pen color to {COLOR}",
     "pen_changepensizeby": "change pen size by {SIZE}",
+    "pen_changePenSizeBy": "change pen size by {SIZE}",
     "pen_setpensizeto": "set pen size to {SIZE}",
 
     # Pen (CamelCase variants found in some files)
@@ -80,7 +92,7 @@ OPCODE_MAP: Dict[str, str] = {
     "pen_menu_colorParam": "{colorParam}",
 
     # Sound Menus
-    "sound_sounds_menu": "{SOUND_MENU}",
+    "sound_sounds_menu": "[{SOUND_MENU} v]",
 
     # Motion Reporters
     "motion_xposition": "(x position)",
@@ -95,19 +107,24 @@ OPCODE_MAP: Dict[str, str] = {
     "control_if_else": "if {CONDITION} then",
     "control_wait_until": "wait until {CONDITION}",
     "control_repeat_until": "repeat until {CONDITION}",
+    "control_while": "while {CONDITION}",
     "control_stop": "stop [{STOP_OPTION} v]",
     "control_start_as_clone": "when I start as a clone",
     "control_create_clone_of": "create clone of {CLONE_OPTION}",
+    "control_create_clone_of_menu": "[{CLONE_OPTION} v]",
     "control_delete_this_clone": "delete this clone",
 
     # Sensing
     "sensing_touchingobject": "<touching {TOUCHINGOBJECTMENU} ?>",
+    "sensing_touchingobjectmenu": "[{TOUCHINGOBJECTMENU} v]",
     "sensing_touchingcolor": "<touching color {COLOR} ?>",
     "sensing_coloristouchingcolor": "<color {COLOR} is touching {COLOR2} ?>",
     "sensing_distanceto": "(distance to {DISTANCETOMENU})",
+    "sensing_distancetomenu": "[{DISTANCETOMENU} v]",
     "sensing_askandwait": "ask {QUESTION} and wait",
     "sensing_answer": "(answer)",
     "sensing_keypressed": "<key [{KEY_OPTION} v] pressed?>",
+    "sensing_keyoptions": "{KEY_OPTION}",
     "sensing_mousedown": "<mouse down?>",
     "sensing_mousex": "(mouse x)",
     "sensing_mousey": "(mouse y)",
@@ -116,6 +133,7 @@ OPCODE_MAP: Dict[str, str] = {
     "sensing_timer": "(timer)",
     "sensing_resettimer": "reset timer",
     "sensing_of": "([{PROPERTY} v] of {OBJECT})",
+    "sensing_of_object_menu": "[{OBJECT} v]",
     "sensing_current": "(current [{CURRENTMENU} v])",
     "sensing_dayssince2000": "(days since 2000)",
     "sensing_username": "(username)",
@@ -160,31 +178,48 @@ OPCODE_MAP: Dict[str, str] = {
     "data_hidelist": "hide list [{LIST} v]",
 
     # Custom Blocks (Procedures)
-    "argument_reporter_string_number": "({VALUE})",
-    "argument_reporter_boolean": "<{VALUE}>",
+    "argument_reporter_string_number": "{{{VALUE}}}",
+    "argument_reporter_boolean": "{{<{VALUE}>}}",
+}
+
+# Normalize legacy/variant opcodes to canonical Scratch 3 names when rebuilding blocks
+OPCODE_NORMALIZATION: Dict[str, str] = {
+    "pen_setpensizeto": "pen_setPenSizeTo",
+    "pen_setpencolortocolor": "pen_setPenColorToColor",
+    "pen_penup": "pen_penUp",
+    "pen_pendown": "pen_penDown",
+    "pen_setpenparamto": "pen_setPenColorParamTo",
+    "pen_changePenSizeBy": "pen_changepensizeby",
 }
 
 # Placeholders that should be treated as fields (instead of inputs) when rebuilding blocks
 OPCODE_FIELDS: Dict[str, set] = {
     "event_whenkeypressed": {"KEY_OPTION"},
+    "sensing_keyoptions": {"KEY_OPTION"},
     "event_whenbackdropswitchesto": {"BACKDROP"},
     "event_whengreaterthan": {"WHENGREATERTHANMENU"},
     "event_whenbroadcastreceived": {"BROADCAST_OPTION"},
     "control_stop": {"STOP_OPTION"},
-    "looks_switchcostumeto": {"COSTUME"},
-    "looks_switchbackdropto": {"BACKDROP"},
+    "looks_backdropnumbername": {"NUMBER_NAME"},
+    "looks_costumenumbername": {"NUMBER_NAME"},
+    "looks_costume": {"COSTUME"},
+    "looks_backdrops": {"BACKDROP"},
     "looks_seteffectto": {"EFFECT"},
     "looks_changeeffectby": {"EFFECT"},
     "looks_gotofrontback": {"FRONT_BACK"},
     "looks_goforwardbackwardlayers": {"FORWARD_BACKWARD"},
     "motion_setrotationstyle": {"STYLE"},
+    "motion_goto_menu": {"TO"},
+    "motion_glideto_menu": {"TO"},
+    "motion_pointtowards_menu": {"TOWARDS"},
     "sound_changeeffectby": {"EFFECT"},
     "sound_seteffectto": {"EFFECT"},
-    "sound_play": {"SOUND_MENU"},
-    "sound_playuntildone": {"SOUND_MENU"},
-    "pen_setpenparamto": {"COLOR_PARAM"},
-    "pen_changepenparamby": {"COLOR_PARAM"},
-    "pen_setPenColorParamTo": {"COLOR_PARAM"},
+    "sensing_setdragmode": {"DRAG_MODE"},
+    "sensing_distancetomenu": {"DISTANCETOMENU"},
+    "sensing_of_object_menu": {"OBJECT"},
+    "sensing_of": {"PROPERTY"},
+    "sensing_current": {"CURRENTMENU"},
+    # Pen color parameter is handled via a menu shadow, not a plain field.
     "data_setvariableto": {"VARIABLE"},
     "data_changevariableby": {"VARIABLE"},
     "data_showvariable": {"VARIABLE"},
@@ -203,6 +238,8 @@ OPCODE_FIELDS: Dict[str, set] = {
     "data_variable": {"VARIABLE"},
     "data_listcontents": {"LIST"},
     "operator_mathop": {"OPERATOR"},
+    "argument_reporter_string_number": {"VALUE"},
+    "argument_reporter_boolean": {"VALUE"},
 }
 
 CONTROL_BLOCKS = {"control_forever", "control_repeat", "control_repeat_until", "control_if", "control_if_else"}
@@ -237,7 +274,9 @@ def build_opcode_patterns() -> List[Tuple[re.Pattern[str], str, List[str]]]:
             literal_len += len(literal)
             if field_name:
                 placeholders.append(field_name)
-                regex_parts.append(r"(?P<%s>.+?)" % field_name)
+                # Greedy capture so nested literals (e.g., " of [" inside math/list expressions)
+                # don't prematurely terminate the placeholder match.
+                regex_parts.append(r"(?P<%s>.+)" % field_name)
         pattern = re.compile("^" + "".join(regex_parts) + "$")
         patterns_with_score.append((literal_len, len(placeholders), pattern, opcode, placeholders))
 

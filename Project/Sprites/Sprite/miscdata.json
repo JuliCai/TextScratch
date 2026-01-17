@@ -1,14 +1,14 @@
 {
     "position": {
-        "x": 70,
+        "x": 0,
         "y": 0
     },
     "size": 100,
     "direction": 90,
     "visible": true,
     "rotationStyle": "all around",
-    "currentCostume": 2,
+    "currentCostume": 0,
     "draggable": false,
     "volume": 100,
-    "layer": 1
+    "layer": 2
 }
