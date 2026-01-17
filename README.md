@@ -68,6 +68,8 @@ cd TextScratch
 
 ## Quick Start
 
+> **Note:** On macOS or Linux, you may need to use `python3` instead of `python` for all commands.
+
 ### 1. Create a New Project
 
 ```bash
@@ -929,6 +931,12 @@ end
 ```
 define fast calculation (n) #norefresh
 ```
+
+---
+
+## How to Contribute
+
+Only pull requests that fix actual issues will be accepted. Before submitting a pull request, please fill out the form in [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md).
 
 ---
 
