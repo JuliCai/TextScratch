@@ -23,6 +23,29 @@ from .utils import gen_id
 # Sound effect names - used to disambiguate sound vs looks effect blocks
 SOUND_EFFECT_NAMES = {"PITCH", "PAN"}
 
+# Opcodes that can only be used in sprites, not the Stage
+# All motion blocks (Scratch doesn't support motion in Stage)
+SPRITE_ONLY_OPCODES = {
+    "motion_movesteps",
+    "motion_turnright",
+    "motion_turnleft",
+    "motion_goto",
+    "motion_gotoxy",
+    "motion_glideto",
+    "motion_glidesecstoxy",
+    "motion_pointindirection",
+    "motion_pointtowards",
+    "motion_changexby",
+    "motion_setx",
+    "motion_changeyby",
+    "motion_sety",
+    "motion_ifonedgebounce",
+    "motion_setrotationstyle",
+    "motion_xposition",
+    "motion_yposition",
+    "motion_direction",
+}
+
 
 def disambiguate_effect_opcode(opcode: str, groups: Dict[str, str]) -> Tuple[str, Dict[str, str]]:
     """Disambiguate between looks and sound effect blocks based on effect name.
@@ -221,6 +244,12 @@ def parse_line_to_node(
     if opcode:
         # Disambiguate effect blocks (looks vs sound) based on effect name
         opcode, groups = disambiguate_effect_opcode(opcode, groups)
+        
+        # Check for sprite-only blocks used in Stage
+        if opcode in SPRITE_ONLY_OPCODES and diag_ctx is not None and diag_ctx.sprite_name == "Stage":
+            block_preview = line[:50] + "..." if len(line) > 50 else line
+            diag_ctx.error(f"Motion blocks cannot be used in the Stage", line_number, block_preview)
+            return None
         
         if opcode in MENU_SHADOW_OPCODES:
             return None
