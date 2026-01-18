@@ -8,6 +8,7 @@ BINARY_OPERATOR_TOKENS: List[Tuple[str, str, str, str]] = [
     (" - ", "operator_subtract", "NUM1", "NUM2"),
     (" * ", "operator_multiply", "NUM1", "NUM2"),
     (" / ", "operator_divide", "NUM1", "NUM2"),
+    (" mod ", "operator_mod", "NUM1", "NUM2"),
 ]
 
 # Opcodes that represent menu shadow blocks
