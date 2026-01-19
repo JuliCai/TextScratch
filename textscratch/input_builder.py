@@ -44,7 +44,12 @@ def parse_balanced_math_expression(
 ) -> Optional[ParsedNode]:
     """Parse a balanced math expression like (a + b)."""
     text = value.strip()
+    # Repeatedly strip wrapping parens until stable, handling nested parens like
+    # (([0.5] * ((ray dy) + [1]))) -> [0.5] * ((ray dy) + [1])
     inner = strip_wrapping_parens(text)
+    while inner != text:
+        text = inner
+        inner = strip_wrapping_parens(text)
 
     for token, opcode, left_name, right_name in BINARY_OPERATOR_TOKENS:
         # Do NOT include "<": ">" as balanced pairs here because:
