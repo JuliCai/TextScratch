@@ -24,6 +24,7 @@
 - [Using manager.py](#using-managerpy)
   - [CLI Usage](#cli-usage)
   - [Python Module Usage](#python-module-usage)
+- [Performance Reference (RTC)](#performance-reference-rtc)
 - [Complete Block Reference](#complete-block-reference)
 
 ---
@@ -638,6 +639,35 @@ except ManagerError as e:
     print(f"Error: {e.message}")
     print(f"Detail: {e.detail}")
 ```
+
+---
+
+## Performance Reference (RTC)
+
+When optimizing Scratch projects, it's helpful to know the relative performance cost of different blocks. The **[RTC.md](RTC.md)** file contains **Relative Time Cost** values for all Scratch blocks, benchmarked relative to the `subtract` operation (which has an RTC of 1.0).
+
+### What is RTC?
+
+- **RTC = 1.0** means the block is as fast as a subtraction
+- **Higher RTC** = slower/more expensive block
+- **N/A** = block intentionally pauses execution (e.g., `wait`, `glide`)
+- **5000.0** = block causes a screen refresh (pauses for one frame)
+
+### Optimization Tips
+
+Use the RTC reference to identify expensive blocks in performance-critical code:
+
+| Category | Fast Blocks (RTC < 2) | Slow Blocks (RTC > 100) |
+|----------|----------------------|------------------------|
+| Operators | `add`, `subtract`, `multiply`, `divide`, `and`, `or`, `not`, `round` | — |
+| Motion | `xposition`, `yposition`, `direction` (0.3) | — |
+| Looks | `costumenumbername`, `size` (0.1) | `switchcostumeto` (304.9), `cleargraphiceffects` (318.1) |
+| Sensing | — | `touchingcolor` (10422.7!), `coloristouchingcolor` (5993.5) |
+| Lists | `lengthoflist` (2.0) | — |
+
+> 💡 **Pro Tip:** Avoid `touching color` and `color is touching color` in tight loops—they are orders of magnitude slower than other blocks!
+
+For the complete RTC values for all blocks, see **[RTC.md](RTC.md)**.
 
 ---
 
