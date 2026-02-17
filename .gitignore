@@ -186,5 +186,8 @@ Other_Codebases/
 #sb3 files
 *.sb3
 
+# macOS system files
+.DS_Store
+
 #Project directory
 Project/
