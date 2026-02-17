@@ -182,3 +182,9 @@ cython_debug/
 
 # External codebases
 Other_Codebases/
+
+#sb3 files
+*.sb3
+
+#Project directory
+Project/
