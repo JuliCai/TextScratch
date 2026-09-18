@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import tempfile
 import zipfile
 from typing import Any, Dict, List, Set, Tuple
 
@@ -15,6 +16,7 @@ from .blocks_to_text import generate_target_code
 from .diagnostics import DiagnosticCollector, DiagnosticContext
 from .layout import auto_arrange_top_blocks
 from .text_to_blocks import code_to_blocks
+from .roundtrip_metadata import comment_anchors, restore_comments
 from .utils import ensure_dir, gen_id, load_json_file, safe_name, write_json_file
 
 
@@ -43,12 +45,14 @@ def build_variables_payload(
     for entry in entries:
         name = entry.get("name", "variable")
         value = entry.get("value", 0)
-        vid = gen_id("var")
+        vid = entry.get("id") or gen_id("var")
         name_to_id[name] = vid
         payload: List[Any] = [name, value]
         if entry.get("cloud"):
             payload.append(True)
         var_dict[vid] = payload
+        if "monitor" in entry and entry["monitor"] is None:
+            continue
         # Build monitor entry
         mon_data = entry.get("monitor", {})
         monitors.append({
@@ -79,9 +83,11 @@ def build_lists_payload(
     for entry in entries:
         name = entry.get("name", "list")
         value = entry.get("value", [])
-        lid = gen_id("list")
+        lid = entry.get("id") or gen_id("list")
         name_to_id[name] = lid
         list_dict[lid] = [name, value]
+        if "monitor" in entry and entry["monitor"] is None:
+            continue
         # Build monitor entry
         mon_data = entry.get("monitor", {})
         monitors.append({
@@ -107,7 +113,7 @@ def convert_variables_dict(
     for var_id, payload in variables.items():
         if isinstance(payload, list) and len(payload) >= 2:
             name, value = payload[0], payload[1]
-            entry: Dict[str, Any] = {"name": name, "value": value}
+            entry: Dict[str, Any] = {"id": var_id, "name": name, "value": value, "monitor": None}
             if len(payload) >= 3 and payload[2] is True:
                 entry["cloud"] = True
             # Find monitor metadata for this variable
@@ -134,7 +140,7 @@ def convert_lists_dict(
     for list_id, payload in lists.items():
         if isinstance(payload, list) and len(payload) >= 2:
             name, value = payload[0], payload[1]
-            entry: Dict[str, Any] = {"name": name, "value": value}
+            entry: Dict[str, Any] = {"id": list_id, "name": name, "value": value, "monitor": None}
             # Find monitor metadata for this list
             for mon in monitors:
                 if mon.get("id") == list_id and mon.get("opcode") == "data_listcontents":
@@ -193,6 +199,7 @@ def write_target(
     archive: zipfile.ZipFile,
     output_root: str,
     monitors: List[Dict[str, Any]],
+    directory_name: str | None = None,
 ) -> None:
     is_stage = target.get("isStage", False)
     target_name = target.get("name", "Sprite")
@@ -202,7 +209,7 @@ def write_target(
     else:
         sprites_root = os.path.join(output_root, "Sprites")
         ensure_dir(sprites_root)
-        target_dir = os.path.join(sprites_root, safe_name(target_name, "Sprite"))
+        target_dir = os.path.join(sprites_root, directory_name or safe_name(target_name, "Sprite"))
 
     ensure_dir(target_dir)
 
@@ -213,7 +220,16 @@ def write_target(
 
     if not is_stage:
         write_variables_file(os.path.join(target_dir, "variables.json"), target, monitors)
-        write_json_file(os.path.join(target_dir, "miscdata.json"), build_miscdata(target))
+    misc = build_miscdata(target)
+    misc["name"] = target_name
+    misc["extractedDirectory"] = os.path.basename(target_dir)
+    misc["comments"] = {cid: dict(c, blockId=None) for cid, c in target.get("comments", {}).items()}
+    misc["commentAnchors"] = comment_anchors(target)
+    if is_stage:
+        for key in ("tempo", "videoTransparency", "videoState", "textToSpeechLanguage"):
+            if key in target:
+                misc[key] = target[key]
+    write_json_file(os.path.join(target_dir, "miscdata.json"), misc)
 
     assets_dir = os.path.join(target_dir, "Assets")
     sounds_dir = os.path.join(target_dir, "Sounds")
@@ -252,8 +268,23 @@ def convert_project(sb3_path: str, output_dir: str, clean: bool = True) -> None:
 
         write_events_file(os.path.join(output_dir, "events.json"), collect_broadcasts(targets))
 
+        directories = []
+        used_names = set()
         for target in targets:
-            write_target(target, archive, output_dir, monitors)
+            directory = safe_name(target.get("name", "Sprite"), "Sprite")
+            base = directory
+            suffix = 2
+            while directory.casefold() in used_names:
+                directory = f"{base}_{suffix}"
+                suffix += 1
+            used_names.add(directory.casefold())
+            if not target.get("isStage"):
+                directories.append(directory)
+            write_target(target, archive, output_dir, monitors, directory)
+        metadata = {k: v for k, v in project.items() if k not in {"targets", "monitors"}}
+        metadata["spriteOrder"] = directories
+        metadata["monitors"] = [m for m in monitors if m.get("opcode") not in {"data_variable", "data_listcontents"}]
+        write_json_file(os.path.join(output_dir, "project-metadata.json"), metadata)
 
     print(f"Successfully converted {sb3_path} to {output_dir}")
 
@@ -265,6 +296,7 @@ def convert_folder_to_sb3(input_dir: str, output_path: str) -> None:
 
     # Create diagnostic collector for all sprites
     diag_collector = DiagnosticCollector()
+    metadata = load_json_file(os.path.join(input_dir, "project-metadata.json"), {})
 
     events_path = os.path.join(input_dir, "events.json")
     variables_path = os.path.join(input_dir, "variables.json")
@@ -272,8 +304,8 @@ def convert_folder_to_sb3(input_dir: str, output_path: str) -> None:
     events_payload = load_json_file(events_path, {"broadcasts": []})
     broadcast_ids: Dict[str, str] = {name: gen_id("broadcast") for name in events_payload.get("broadcasts", [])}
 
-    extensions: Set[str] = set()
-    all_monitors: List[Dict[str, Any]] = []
+    extensions: Set[str] = set(metadata.get("extensions", []))
+    all_monitors: List[Dict[str, Any]] = list(metadata.get("monitors", []))
 
     root_vars_payload = load_json_file(variables_path, {"variables": [], "lists": []})
     stage_vars, stage_var_ids, stage_var_monitors = build_variables_payload(
@@ -291,6 +323,7 @@ def convert_folder_to_sb3(input_dir: str, output_path: str) -> None:
     stage_diag = DiagnosticContext(sprite_name="Stage")
 
     stage_dir = os.path.join(input_dir, "Stage")
+    stage_misc = load_json_file(os.path.join(stage_dir, "miscdata.json"), {})
     stage_blocks = code_to_blocks(
         os.path.join(stage_dir, "code.scratchblocks"),
         stage_var_ids,
@@ -315,7 +348,7 @@ def convert_folder_to_sb3(input_dir: str, output_path: str) -> None:
         "lists": stage_lists,
         "broadcasts": {bid: name for name, bid in broadcast_ids.items()},
         "blocks": stage_blocks,
-        "comments": {},
+        "comments": restore_comments(stage_misc, stage_blocks),
         "currentCostume": 0,
         "costumes": stage_costumes,
         "sounds": stage_sounds,
@@ -328,13 +361,21 @@ def convert_folder_to_sb3(input_dir: str, output_path: str) -> None:
     }
 
     targets: List[Dict[str, Any]] = [stage_target]
+    for key in ("name", "currentCostume", "volume", "tempo", "videoTransparency", "videoState", "textToSpeechLanguage"):
+        if key in stage_misc:
+            stage_target[key] = stage_misc[key]
 
     sprites_root = os.path.join(input_dir, "Sprites")
     if os.path.exists(sprites_root):
-        for idx, sprite_name in enumerate(sorted(os.listdir(sprites_root)), start=1):
+        order = metadata.get("spriteOrder", [])
+        directories = sorted(os.listdir(sprites_root), key=lambda n: (order.index(n) if n in order else len(order), n))
+        for idx, sprite_name in enumerate(directories, start=1):
             sprite_dir = os.path.join(sprites_root, sprite_name)
             if not os.path.isdir(sprite_dir):
                 continue
+            identity = load_json_file(os.path.join(sprite_dir, "miscdata.json"), {})
+            if identity.get("extractedDirectory") == sprite_name:
+                sprite_name = identity.get("name", sprite_name)
 
             sprite_vars_payload = load_json_file(os.path.join(sprite_dir, "variables.json"), {"variables": [], "lists": []})
             sprite_vars, sprite_var_ids, sprite_var_monitors = build_variables_payload(
@@ -374,6 +415,10 @@ def convert_folder_to_sb3(input_dir: str, output_path: str) -> None:
                 sprite_diag,
             )
             diag_collector.add_context_diagnostics(sprite_diag)
+            for name, vid in sprite_var_ids.items():
+                sprite_vars.setdefault(vid, [name, 0])
+            for name, lid in sprite_list_ids.items():
+                sprite_lists.setdefault(lid, [name, []])
             auto_arrange_top_blocks(sprite_blocks)
             collect_extensions_from_blocks(sprite_blocks, extensions)
 
@@ -396,7 +441,7 @@ def convert_folder_to_sb3(input_dir: str, output_path: str) -> None:
                     "lists": sprite_lists,
                     "broadcasts": {},
                     "blocks": sprite_blocks,
-                    "comments": {},
+                    "comments": restore_comments(misc, sprite_blocks),
                     "currentCostume": current_costume,
                     "costumes": sprite_costumes,
                     "sounds": sprite_sounds,
@@ -412,11 +457,24 @@ def convert_folder_to_sb3(input_dir: str, output_path: str) -> None:
                 }
             )
 
+    # Parsing may discover new broadcasts or undeclared variables/lists.
+    stage_target["broadcasts"] = {bid: name for name, bid in broadcast_ids.items()}
+    for target in targets:
+        for block in target["blocks"].values():
+            for inp in block.get("inputs", {}).values():
+                for value in inp[1:]:
+                    if isinstance(value, list) and value[0] == 11:
+                        stage_target["broadcasts"][value[2]] = value[1]
+    for name, vid in stage_var_ids.items():
+        stage_target["variables"].setdefault(vid, [name, 0])
+    for name, lid in stage_list_ids.items():
+        stage_target["lists"].setdefault(lid, [name, []])
     project = {
+        **{k: v for k, v in metadata.items() if k not in {"spriteOrder", "monitors"}},
         "targets": targets,
         "monitors": all_monitors,
         "extensions": sorted(extensions),
-        "meta": {
+        "meta": metadata.get("meta") or {
             "semver": "3.0.0",
             "vm": "0.2.0",
             "agent": "",
@@ -424,15 +482,25 @@ def convert_folder_to_sb3(input_dir: str, output_path: str) -> None:
         },
     }
 
+    if diag_collector.has_errors():
+        diag_collector.print_all()
+        raise ValueError("SB3 export aborted: " + diag_collector.summary())
     ensure_dir(os.path.dirname(output_path) or ".")
-    with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("project.json", json.dumps(project, indent=4))
-        seen_assets = set()
-        for src, dest in assets_to_pack:
-            if dest in seen_assets:
-                continue
-            seen_assets.add(dest)
-            archive.write(src, dest)
+    with tempfile.NamedTemporaryFile(dir=os.path.dirname(output_path) or ".", suffix=".sb3.tmp", delete=False) as pending:
+        pending_path = pending.name
+    try:
+        with zipfile.ZipFile(pending_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("project.json", json.dumps(project, indent=4, allow_nan=False))
+            seen_assets = set()
+            for src, dest in assets_to_pack:
+                if dest in seen_assets:
+                    continue
+                seen_assets.add(dest)
+                archive.write(src, dest)
+        os.replace(pending_path, output_path)
+    finally:
+        if os.path.exists(pending_path):
+            os.unlink(pending_path)
 
     # Print diagnostics if any
     if diag_collector.all_diagnostics:

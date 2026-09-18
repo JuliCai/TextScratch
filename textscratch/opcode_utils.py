@@ -4,8 +4,9 @@ import string
 from typing import Any, Dict, Optional, Tuple
 
 from .constants import MENU_SHADOW_FOR_INPUT, MENU_SHADOW_OPCODES
-from .opcodes import OPCODE_MAP, OPCODE_NORMALIZATION, OPCODE_PATTERNS
+from .opcodes import OPCODE_MAP, OPCODE_NORMALIZATION, OPCODE_PATTERNS, MATH_OPERATORS
 from .utils import gen_id
+from .string_utils import match_parts
 
 
 def _opcode_literal_length(opcode: str) -> int:
@@ -47,9 +48,21 @@ def match_opcode_line(
     for pattern, opcode, placeholders in OPCODE_PATTERNS:
         if not allow_menu_only and _opcode_literal_length(opcode) == 0:
             continue
-        match = pattern.match(line)
-        if match:
-            groups = {name: match.group(name) for name in placeholders}
+        fmt = OPCODE_MAP[opcode]
+        literals = []
+        for literal, field, _, _ in string.Formatter().parse(fmt):
+            if not literals:
+                literals.append(literal)
+            else:
+                literals[-1] += literal
+            if field:
+                literals.append("")
+        captures = match_parts(line, literals) if placeholders else ([] if line == fmt else None)
+        if captures is not None:
+            groups = dict(zip(placeholders, captures))
+            if opcode == "sensing_of" and groups.get("PROPERTY") in MATH_OPERATORS:
+                if not groups["OBJECT"].endswith(" v]"):
+                    return "operator_mathop", {"OPERATOR": groups["PROPERTY"], "NUM": groups["OBJECT"]}
             normalized = OPCODE_NORMALIZATION.get(opcode, opcode)
             return normalized, groups
     return None, {}
@@ -59,15 +72,21 @@ def create_menu_shadow_block(
     input_name: str,
     parent_id: str,
     blocks: Dict[str, Dict[str, Any]],
+    owner_opcode: str = "",
 ) -> Optional[str]:
     """Create a shadow menu block for inputs that need one (like COSTUME).
 
     Returns the block ID of the created shadow, or None if no shadow is needed.
     """
-    if input_name not in MENU_SHADOW_FOR_INPUT:
+    menu = MENU_SHADOW_FOR_INPUT.get(input_name)
+    if input_name == "TO" and owner_opcode in {"motion_goto", "motion_glideto"}:
+        menu = (owner_opcode + "_menu", "TO")
+    elif input_name == "TOWARDS" and owner_opcode == "motion_pointtowards":
+        menu = ("motion_pointtowards_menu", "TOWARDS")
+    if menu is None:
         return None
 
-    opcode, field_name = MENU_SHADOW_FOR_INPUT[input_name]
+    opcode, field_name = menu
     shadow_id = gen_id("shadow")
 
     # Use a default value - first costume/backdrop/sound will be selected at runtime

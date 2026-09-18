@@ -24,6 +24,7 @@ from .opcode_utils import match_opcode_line
 from .parsed_node import ParsedNode
 from .string_utils import (
     coerce_number,
+    unescape_text,
     split_top_level,
     split_top_level_whitespace,
     strip_wrappers,
@@ -201,120 +202,16 @@ def parse_inline_expression(
     if re.match(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$", hex_candidate):
         return None
 
-    structured = parse_balanced_math_expression(
-        value,
-        procedure_defs,
-        local_vars,
-        global_vars,
-        local_lists,
-        global_lists,
-        broadcast_ids,
-        procedure_args,
-    )
-    if structured:
-        return structured
-
-    boolean_node = parse_boolean_expression(
-        value,
-        procedure_defs,
-        local_vars,
-        global_vars,
-        local_lists,
-        global_lists,
-        broadcast_ids,
-        procedure_args,
-    )
-    if boolean_node:
-        return boolean_node
-
-    text = value.strip()
-    if text.startswith("(join ") and text.endswith(")"):
-        join_body = text[1:-1].strip()
-        remainder = join_body[len("join") :].strip()
-        parts = split_top_level_whitespace(remainder, 2)
-        if len(parts) == 2:
-            node = ParsedNode("operator_join")
-            node.inputs["STRING1"] = build_input_value(
-                parts[0],
-                "STRING1",
-                broadcast_ids,
-                True,
-                procedure_defs,
-                local_vars,
-                global_vars,
-                local_lists,
-                global_lists,
-                procedure_args,
-            )
-            node.inputs["STRING2"] = build_input_value(
-                parts[1],
-                "STRING2",
-                broadcast_ids,
-                True,
-                procedure_defs,
-                local_vars,
-                global_vars,
-                local_lists,
-                global_lists,
-                procedure_args,
-            )
-            return node
-
-    def maybe_strip_parens(text: str) -> str:
-        return strip_wrapping_parens(text)
-
-    math_match: Optional[re.Match[str]] = None
-    for candidate in (value, maybe_strip_parens(value)):
-        math_match = re.match(r"^\[([^\]]+)\] of \((.+)\)$", candidate)
-        if math_match:
-            break
-
-    if math_match:
-        op_token = math_match.group(1).strip()
-        if op_token.endswith(" v"):
-            op_token = op_token[:-2].strip()
-        if op_token in MATH_OPERATORS:
-            opcode = "operator_mathop"
-            groups = {"OPERATOR": op_token, "NUM": math_match.group(2).strip()}
-        else:
-            opcode, groups = match_opcode_line(value, allow_menu_only=False)
-    else:
-        opcode, groups = match_opcode_line(value, allow_menu_only=False)
-    # Avoid wrapping free-form text in parentheses; only already-structured text should match.
-
-    # Disambiguate sensing_of vs mathop when the property token is a math operator
-    if opcode == "sensing_of":
-        prop = groups.get("PROPERTY", "").strip()
-        if prop.endswith(" v"):
-            prop = prop[:-2].strip()
-        obj = groups.get("OBJECT", "")
-        if prop in MATH_OPERATORS:
-            opcode = "operator_mathop"
-            groups = {"OPERATOR": prop, "NUM": obj}
-    if not opcode:
+    opcode, groups = match_opcode_line(value, allow_menu_only=False)
+    if opcode in {"data_variable", "data_listcontents"}:
         return None
-
-    # Avoid turning control/event/procedure-definition into inline nodes; inline should be reporter/command blocks
-    if (
-        opcode in CONTROL_BLOCKS
-        or opcode.startswith("event_")
-        or opcode == "procedures_definition"
-    ):
-        return None
-
-    # Skip menu-only patterns (no literals) that would greedily swallow any text, e.g. pen menus
-    fmt = OPCODE_MAP.get(opcode, "")
-    literal_len = sum(len(lit) for lit, _, _, _ in string.Formatter().parse(fmt) if lit)
-    if literal_len == 0 or opcode.endswith("_menu") or opcode.startswith("pen_menu"):
+    if not opcode or opcode in CONTROL_BLOCKS or opcode.startswith("event_"):
         return None
 
     inputs: Dict[str, Any] = {}
     fields: Dict[str, Any] = {}
 
     for name, captured in groups.items():
-        if opcode == "sensing_keypressed" and name == "KEY_OPTION":
-            inputs[name] = build_key_option_input(captured)
-            continue
         if opcode in {"event_whenkeypressed", "sensing_keyoptions"} and name == "KEY_OPTION":
             fields[name] = resolve_field_value(
                 name,
@@ -369,98 +266,62 @@ def build_input_value(
     line_number: Optional[int] = None,
 ) -> Any:
     """Build an input value, handling literals, variables, lists, and inline expressions."""
-    raw = value.strip("\n\r")
-    raw_stripped = raw.strip()
-    wrapped_inner: Optional[str] = None
-    hex_candidate: str
-    hex_candidate = ""
-    if (
-        (raw_stripped.startswith("[") and raw_stripped.endswith("]"))
-        or (raw_stripped.startswith("(") and raw_stripped.endswith(")"))
-        or (raw_stripped.startswith("{") and raw_stripped.endswith("}"))
-    ):
-        wrapped_inner = raw_stripped[1:-1]
+    raw = value.strip()
+    raw_stripped = raw
     inner = strip_wrappers(raw, strip_inner=False)
     inner_stripped = inner.strip()
-    hex_candidate = strip_wrapping_parens(inner_stripped)
     is_color_input = input_name in {"COLOR", "COLOR2"}
-    color_shadow_value = [
-        9,
-        hex_candidate
-        if re.match(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$", hex_candidate)
-        else "#000000",
-    ]
-    num_val = coerce_number(inner_stripped)
+    color_shadow_value = [9, "#000000"]
+    is_square = raw.startswith("[") and raw.endswith("]")
+    is_menu = is_square and inner.endswith(" v")
+    is_reporter = raw.startswith(("(", "<", "{"))
 
-    # Treat empty reporter/boolean placeholders (e.g., "<>", "()", "[]") as intentionally missing
-    # inputs so we omit them from the block JSON instead of emitting an unusable literal string.
-    if raw_stripped == "<>":
+    if raw == "<>":
         return None
-    if raw_stripped in {"[]", "()", "{}"} or (
-        inner_stripped == "" and (wrapped_inner is None or wrapped_inner == "")
-    ):
-        return default_empty_input(input_name)
+    qualifier = re.fullmatch(r"\((.*) :: (variables|list)( global)?\)", raw)
+    if qualifier:
+        name, kind, scope = qualifier.groups()
+        name = unescape_text(name)
+        if kind == "variables":
+            vid = resolve_variable_id(name, {} if scope else local_vars, global_vars)
+            return [3, [12, name, vid], [10, ""]]
+        lid = resolve_list_id(name, {} if scope else local_lists, global_lists)
+        return [3, [13, name, lid], [10, ""]]
+    if is_color_input and re.fullmatch(r"#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3}", inner):
+        color = inner if len(inner) == 7 else "#" + "".join(c * 2 for c in inner[1:])
+        return [1, [9, color]]
 
-    if "BROADCAST" in input_name:
-        bid = broadcast_ids.setdefault(inner, gen_id("broadcast"))
-        return [1, [11, inner, bid]]
-
-    if input_name == "COLOR_PARAM":
+    # Menus accept expressions too. Only literal menu selections become shadows.
+    from .constants import MENU_SHADOW_FOR_INPUT
+    if input_name == "BROADCAST_INPUT" and not is_reporter:
+        name = unescape_text(inner[:-2] if is_menu else inner)
+        bid = broadcast_ids.setdefault(name, gen_id("broadcast"))
+        return [1, [11, name, bid]]
+    if input_name in MENU_SHADOW_FOR_INPUT and not is_reporter:
+        opcode, field = MENU_SHADOW_FOR_INPUT[input_name]
+        return build_menu_shadow_input(opcode, field, raw)
+    if input_name == "COLOR_PARAM" and raw.endswith(" v)"):
         return build_menu_shadow_input("pen_menu_colorParam", "colorParam", raw)
 
-    if is_color_input:
-        if re.match(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$", hex_candidate):
-            return [1, [9, hex_candidate]]
-
-    # Helper to check if value looks like a menu (ends with " v]" or "v]")
-    def is_menu_value(val: str) -> bool:
-        stripped = val.strip()
-        return stripped.startswith("[") and stripped.endswith("v]")
-
-    if input_name == "DISTANCETOMENU":
-        return build_menu_shadow_input("sensing_distancetomenu", "DISTANCETOMENU", raw)
-
-    if input_name == "CLONE_OPTION":
-        return build_menu_shadow_input(
-            "control_create_clone_of_menu", "CLONE_OPTION", raw
-        )
-
-    if input_name == "TOUCHINGOBJECTMENU":
-        return build_menu_shadow_input(
-            "sensing_touchingobjectmenu", "TOUCHINGOBJECTMENU", raw
-        )
-
-    # Only create menu shadows for COSTUME/BACKDROP/SOUND_MENU if the value looks like a menu
-    # (e.g., "[costume1 v]"). If it's a reporter expression, let it fall through to normal processing.
-    if input_name == "COSTUME" and is_menu_value(raw):
-        return build_menu_shadow_input("looks_costume", "COSTUME", raw)
-
-    if input_name == "BACKDROP" and is_menu_value(raw):
-        return build_menu_shadow_input("looks_backdrops", "BACKDROP", raw)
-
-    if input_name == "SOUND_MENU" and is_menu_value(raw):
-        return build_menu_shadow_input("sound_sounds_menu", "SOUND_MENU", raw)
-
-    if input_name == "OBJECT":
-        return build_menu_shadow_input("sensing_of_object_menu", "OBJECT", raw)
-
-    if num_val is not None:
-        return [1, [4, num_val]]
+    # Square brackets always contain literal text, even if it is a variable name,
+    # an expression, leading zeroes, whitespace, Infinity, or a very large integer.
+    if is_square:
+        return [1, [10, unescape_text(inner)]]
+    if raw in {"", "()", "{}"}:
+        return default_empty_input(input_name)
+    if raw.startswith("(") and raw.endswith(")") and coerce_number(inner) is not None:
+        return [1, [4, inner]]
 
     # If this value is curly-wrapped, treat it as a custom-block argument reference.
     # This handles both in-scope args (with known IDs) and orphaned scripts (unknown IDs).
     is_curly_wrapped = raw_stripped.startswith("{") and raw_stripped.endswith("}")
     if is_curly_wrapped:
-        arg_inner = raw_stripped[1:-1].strip()
+        arg_inner = raw_stripped[1:-1]
         reporter_opcode = "argument_reporter_string_number"
         if arg_inner.startswith("<") and arg_inner.endswith(">"):
-            arg_inner = arg_inner[1:-1].strip()
+            arg_inner = arg_inner[1:-1]
             reporter_opcode = "argument_reporter_boolean"
-        # Use known arg_id if available, otherwise generate a new one
-        if procedure_args and arg_inner in procedure_args:
-            arg_id = procedure_args[arg_inner]
-        else:
-            arg_id = gen_id("arg")
+        arg_inner = unescape_text(arg_inner)
         reporter = ParsedNode(reporter_opcode)
         reporter.fields = {"VALUE": [arg_inner, None]}
         reporter.mutation = {}
@@ -476,19 +337,11 @@ def build_input_value(
             global_lists,
             broadcast_ids,
             procedure_args,
-        ) or parse_inline_expression(
-            inner,
-            procedure_defs,
-            local_vars,
-            global_vars,
-            local_lists,
-            global_lists,
-            broadcast_ids,
-            procedure_args,
         )
         if inline_node:
             return inline_node
 
+    inner = unescape_text(inner)
     if inner in local_vars or inner in global_vars:
         vid = resolve_variable_id(inner, local_vars, global_vars)
         shadow = color_shadow_value if is_color_input else [10, ""]
@@ -513,8 +366,6 @@ def build_input_value(
         diag_ctx.warning(f"Unknown reporter or undefined variable '{inner_stripped}'", line_number)
 
     literal_value = inner
-    if wrapped_inner is not None:
-        literal_value = wrapped_inner
     if is_color_input:
         return [1, color_shadow_value]
     return [1, [10, literal_value]]

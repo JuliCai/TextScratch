@@ -3,6 +3,7 @@ import os
 import re
 import shutil
 import zipfile
+import wave
 from typing import Any, Dict, List, Optional, Tuple
 
 try:  # Optional dependency for accurate image sizing
@@ -16,6 +17,11 @@ from .utils import ensure_dir, load_json_file, safe_name, write_json_file
 NAME_MAP_COSTUMES = "__costume_name_map__.json"
 NAME_MAP_SOUNDS = "__sound_name_map__.json"
 META_COSTUMES = "__costume_meta__.json"
+META_SOUNDS = "__sound_meta__.json"
+
+
+def asset_sort_key(name: str):
+    return [int(part) if part.isdigit() else part.casefold() for part in re.split(r"(\d+)", name)]
 
 
 def probe_image_size(path: str, ext: str) -> Optional[Tuple[float, float]]:
@@ -74,12 +80,12 @@ def prepare_costumes(asset_dir: str) -> Tuple[List[Dict[str, Any]], List[Tuple[s
     files: List[Tuple[str, str]] = []
 
     if not os.path.exists(asset_dir):
-        return costumes, files
+        return blank_costume()
 
     name_map = load_name_map(asset_dir, NAME_MAP_COSTUMES)
     meta_map = load_costume_meta(asset_dir)
 
-    for fname in sorted(os.listdir(asset_dir)):
+    for fname in sorted(os.listdir(asset_dir), key=asset_sort_key):
         if fname in {NAME_MAP_COSTUMES, META_COSTUMES}:
             continue
 
@@ -90,6 +96,8 @@ def prepare_costumes(asset_dir: str) -> Tuple[List[Dict[str, Any]], List[Tuple[s
             data = handle.read()
         asset_id = hashlib.md5(data).hexdigest()
         ext = os.path.splitext(fname)[1].lower().lstrip(".")
+        if ext not in {"svg", "png", "jpg", "jpeg", "gif", "bmp", "webp"}:
+            continue
         md5ext = f"{asset_id}.{ext}" if ext else asset_id
 
         size = probe_image_size(path, ext)
@@ -98,9 +106,6 @@ def prepare_costumes(asset_dir: str) -> Tuple[List[Dict[str, Any]], List[Tuple[s
         if "rotationCenterX" in meta or "rotationCenterY" in meta:
             center_x = meta.get("rotationCenterX", 0)
             center_y = meta.get("rotationCenterY", 0)
-        elif ext == "svg":
-            center_x = 0
-            center_y = 0
         else:
             center_x = size[0] / 2 if size else 0
             center_y = size[1] / 2 if size else 0
@@ -123,7 +128,18 @@ def prepare_costumes(asset_dir: str) -> Tuple[List[Dict[str, Any]], List[Tuple[s
             }
         )
         files.append((path, md5ext))
-    return costumes, files
+    return (costumes, files) if costumes else blank_costume()
+
+
+def blank_costume() -> Tuple[List[Dict[str, Any]], List[Tuple[str, str]]]:
+    """Scratch's renderer requires at least one costume for every target."""
+    path = os.path.join(os.path.dirname(__file__), "assets", "blank.svg")
+    with open(path, "rb") as handle:
+        asset_id = hashlib.md5(handle.read()).hexdigest()
+    md5ext = asset_id + ".svg"
+    return ([{"name": "blank", "assetId": asset_id, "md5ext": md5ext,
+              "dataFormat": "svg", "bitmapResolution": 1,
+              "rotationCenterX": 0, "rotationCenterY": 0}], [(path, md5ext)])
 
 
 def prepare_sounds(asset_dir: str) -> Tuple[List[Dict[str, Any]], List[Tuple[str, str]]]:
@@ -134,9 +150,10 @@ def prepare_sounds(asset_dir: str) -> Tuple[List[Dict[str, Any]], List[Tuple[str
         return sounds, files
 
     name_map = load_name_map(asset_dir, NAME_MAP_SOUNDS)
+    meta_map = load_json_file(os.path.join(asset_dir, META_SOUNDS), {})
 
-    for fname in sorted(os.listdir(asset_dir)):
-        if fname == NAME_MAP_SOUNDS:
+    for fname in sorted(os.listdir(asset_dir), key=asset_sort_key):
+        if fname in {NAME_MAP_SOUNDS, META_SOUNDS}:
             continue
 
         path = os.path.join(asset_dir, fname)
@@ -146,17 +163,26 @@ def prepare_sounds(asset_dir: str) -> Tuple[List[Dict[str, Any]], List[Tuple[str
             data = handle.read()
         asset_id = hashlib.md5(data).hexdigest()
         ext = os.path.splitext(fname)[1].lower().lstrip(".")
+        if ext not in {"wav", "mp3", "ogg"}:
+            continue
         md5ext = f"{asset_id}.{ext}" if ext else asset_id
         display_name = name_map.get(fname, cleaned_asset_name(fname))
 
         sound_entry = {
+            **meta_map.get(fname, {}),
             "name": display_name,
             "assetId": asset_id,
             "dataFormat": ext,
-            "rate": 0,
-            "sampleCount": 0,
+            "rate": meta_map.get(fname, {}).get("rate", 0),
+            "sampleCount": meta_map.get(fname, {}).get("sampleCount", 0),
             "md5ext": md5ext,
         }
+        if ext == "wav" and not {"rate", "sampleCount"}.issubset(meta_map.get(fname, {})):
+            try:
+                with wave.open(path, "rb") as audio:
+                    sound_entry.update(rate=audio.getframerate(), sampleCount=audio.getnframes())
+            except (wave.Error, EOFError):
+                pass
         sounds.append(sound_entry)
         files.append((path, md5ext))
     return sounds, files
@@ -184,12 +210,11 @@ def copy_costumes(target: Dict[str, Any], archive: zipfile.ZipFile, assets_dir: 
     name_map: Dict[str, str] = {}
     meta_map: Dict[str, Dict[str, Any]] = {}
     for idx, costume in enumerate(target.get("costumes", [])):
-        md5ext = costume.get("md5ext")
+        md5ext = costume.get("md5ext") or f"{costume.get('assetId')}.{costume.get('dataFormat')}"
         if not md5ext:
             continue
         if md5ext not in archive.namelist():
-            print(f"Warning: costume asset {md5ext} not found in archive")
-            continue
+            raise FileNotFoundError(f"Costume asset {md5ext} not found in archive")
 
         ext = os.path.splitext(md5ext)[1] or f".{costume.get('dataFormat', '')}"
         # Use an index+hash-based filename to avoid collisions on case-insensitive filesystems.
@@ -201,7 +226,7 @@ def copy_costumes(target: Dict[str, Any], archive: zipfile.ZipFile, assets_dir: 
 
         # Track original name so we can restore characters not safe for filenames.
         orig_name = costume.get("name")
-        if orig_name:
+        if orig_name is not None:
             name_map[dest_name] = orig_name
 
         meta_map[dest_name] = {
@@ -223,13 +248,13 @@ def copy_sounds(target: Dict[str, Any], archive: zipfile.ZipFile, sounds_dir: st
         return
 
     name_map: Dict[str, str] = {}
+    meta_map: Dict[str, Dict[str, Any]] = {}
     for idx, sound in enumerate(target.get("sounds", [])):
-        md5ext = sound.get("md5ext")
+        md5ext = sound.get("md5ext") or f"{sound.get('assetId')}.{sound.get('dataFormat')}"
         if not md5ext:
             continue
         if md5ext not in archive.namelist():
-            print(f"Warning: sound asset {md5ext} not found in archive")
-            continue
+            raise FileNotFoundError(f"Sound asset {md5ext} not found in archive")
 
         ext = os.path.splitext(md5ext)[1] or f".{sound.get('dataFormat', '')}"
         dest_name = f"sound_{idx:03d}__{md5ext}"
@@ -239,8 +264,11 @@ def copy_sounds(target: Dict[str, Any], archive: zipfile.ZipFile, sounds_dir: st
             shutil.copyfileobj(src, dst)
 
         orig_name = sound.get("name")
-        if orig_name:
+        if orig_name is not None:
             name_map[dest_name] = orig_name
+        meta_map[dest_name] = {k: v for k, v in sound.items() if k not in {"name", "assetId", "md5ext", "dataFormat"}}
 
     if name_map:
         write_json_file(os.path.join(sounds_dir, NAME_MAP_SOUNDS), name_map)
+    if meta_map:
+        write_json_file(os.path.join(sounds_dir, META_SOUNDS), meta_map)

@@ -20,6 +20,7 @@
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Scratchblocks Syntax](#scratchblocks-syntax)
+- [Round-trip Preservation and Validation](#round-trip-preservation-and-validation)
 - [Using convert.py (CLI)](#using-convertpy-cli)
 - [Using manager.py](#using-managerpy)
   - [CLI Usage](#cli-usage)
@@ -184,6 +185,52 @@ jump [50]
 // This is a comment
 say [Hello!] // Inline comment
 ```
+
+### Literal Values and Ambiguous Names
+
+Square brackets preserve literal text, including numeric spelling: `[001]` stays
+`001`, and `[score]` is text. Use `(score)` to read a variable. Escape literal
+brackets, parentheses, braces, angle brackets, colons, and backslashes with `\`;
+use `\n`, `\r`, and `\t` for newlines, carriage returns, and tabs.
+
+When a name could mean a built-in reporter or another data item, use an explicit
+qualifier: `(x position :: variables)`, `(items :: list)`, or
+`(score :: variables global)`. A variable dropdown can select a Stage variable
+explicitly with `[score :: global v]`.
+
+Boolean custom-block parameters use `<condition>` in the definition and
+`{<condition>}` in the body. Control blocks use explicit `end` and `else` lines;
+indentation is optional, and blank lines inside a control block are allowed.
+
+## Round-trip Preservation and Validation
+
+Keep the extracted JSON files alongside the code and assets. `project-metadata.json`
+preserves project metadata and sprite order; each target's `miscdata.json` preserves
+its settings, original name, and comments. Costume and sound directories contain
+`__costume_meta__.json` and `__sound_meta__.json` sidecars. Variable/list IDs and
+monitor settings are retained in `variables.json`.
+
+Compilation rebuilds the executable blocks from the text. It preserves supported
+block behavior, rather than producing byte-identical project JSON: block IDs and
+layout can change, unreachable blocks may be omitted, and stale monitors referring
+to missing sprites are omitted. Comment attachments are restored by structural
+position and opcode; substantial code edits may detach or shift attachments.
+Unsupported blocks still require implementation in the opcode mapping.
+
+Unknown command diagnostics abort compilation instead of silently writing a partial
+project. SB3 output is replaced only after the new archive has been written
+successfully. Missing referenced assets also produce an error.
+
+Run the regression suite or compare executable graphs in two archives:
+
+```bash
+python -m unittest discover -q
+python -m tests.compare_projects original.sb3 rebuilt.sb3
+```
+
+The graph comparison ignores generated IDs, layout, and inactive input shadows;
+it is not a full metadata or runtime comparison. See the
+[pipeline repair notes](docs/pipeline-repairs.md) for fixes and validation results.
 
 ---
 

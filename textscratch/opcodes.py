@@ -9,6 +9,7 @@ OPCODE_MAP: Dict[str, str] = {
     "event_whenflagclicked": "when green flag clicked",
     "event_whenkeypressed": "when [{KEY_OPTION} v] key pressed",
     "event_whenthisspriteclicked": "when this sprite clicked",
+    "event_whenstageclicked": "when stage clicked",
     "event_whenbackdropswitchesto": "when backdrop switches to [{BACKDROP} v]",
     "event_whengreaterthan": "when [{WHENGREATERTHANMENU} v] > {VALUE}",
     "event_whenbroadcastreceived": "when I receive [{BROADCAST_OPTION} v]",
@@ -43,6 +44,7 @@ OPCODE_MAP: Dict[str, str] = {
     "looks_switchcostumeto": "switch costume to {COSTUME}",
     "looks_nextcostume": "next costume",
     "looks_switchbackdropto": "switch backdrop to {BACKDROP}",
+    "looks_switchbackdroptoandwait": "switch backdrop to {BACKDROP} and wait",
     "looks_backdrops": "[{BACKDROP} v]",
     "looks_costumenumbername": "(costume [{NUMBER_NAME} v])",
     "looks_backdropnumbername": "(backdrop [{NUMBER_NAME} v])",
@@ -75,9 +77,9 @@ OPCODE_MAP: Dict[str, str] = {
     "pen_stamp": "stamp",
     "pen_penup": "pen up",
     "pen_pendown": "pen down",
-    "pen_setpenparamto": "set pen ({COLOR_PARAM} v) to {VALUE}",
-    "pen_changepenparamby": "change pen ({COLOR_PARAM} v) by {VALUE}",
-    "pen_changePenColorParamBy": "change pen ({COLOR_PARAM} v) by {VALUE}",
+    "pen_setpenparamto": "set pen {COLOR_PARAM} to {VALUE}",
+    "pen_changepenparamby": "change pen {COLOR_PARAM} by {VALUE}",
+    "pen_changePenColorParamBy": "change pen {COLOR_PARAM} by {VALUE}",
     "pen_setpencolortocolor": "set pen color to {COLOR}",
     "pen_changepensizeby": "change pen size by {SIZE}",
     "pen_changePenSizeBy": "change pen size by {SIZE}",
@@ -88,8 +90,8 @@ OPCODE_MAP: Dict[str, str] = {
     "pen_setPenSizeTo": "set pen size to {SIZE}",
     "pen_penUp": "pen up",
     "pen_penDown": "pen down",
-    "pen_setPenColorParamTo": "set pen ({COLOR_PARAM} v) to {VALUE}",
-    "pen_menu_colorParam": "{colorParam}",
+    "pen_setPenColorParamTo": "set pen {COLOR_PARAM} to {VALUE}",
+    "pen_menu_colorParam": "({colorParam} v)",
 
     # Sound Menus
     "sound_sounds_menu": "[{SOUND_MENU} v]",
@@ -108,6 +110,8 @@ OPCODE_MAP: Dict[str, str] = {
     "control_wait_until": "wait until {CONDITION}",
     "control_repeat_until": "repeat until {CONDITION}",
     "control_while": "while {CONDITION}",
+    "control_for_each": "for each [{VARIABLE} v] in {VALUE}",
+    "control_all_at_once": "all at once",
     "control_stop": "stop [{STOP_OPTION} v]",
     "control_start_as_clone": "when I start as a clone",
     "control_create_clone_of": "create clone of {CLONE_OPTION}",
@@ -123,8 +127,8 @@ OPCODE_MAP: Dict[str, str] = {
     "sensing_distancetomenu": "[{DISTANCETOMENU} v]",
     "sensing_askandwait": "ask {QUESTION} and wait",
     "sensing_answer": "(answer)",
-    "sensing_keypressed": "<key [{KEY_OPTION} v] pressed?>",
-    "sensing_keyoptions": "{KEY_OPTION}",
+    "sensing_keypressed": "<key {KEY_OPTION} pressed?>",
+    "sensing_keyoptions": "[{KEY_OPTION} v]",
     "sensing_mousedown": "<mouse down?>",
     "sensing_mousex": "(mouse x)",
     "sensing_mousey": "(mouse y)",
@@ -189,7 +193,8 @@ OPCODE_NORMALIZATION: Dict[str, str] = {
     "pen_penup": "pen_penUp",
     "pen_pendown": "pen_penDown",
     "pen_setpenparamto": "pen_setPenColorParamTo",
-    "pen_changePenSizeBy": "pen_changepensizeby",
+    "pen_changepensizeby": "pen_changePenSizeBy",
+    "pen_changepenparamby": "pen_changePenColorParamBy",
 }
 
 # Placeholders that should be treated as fields (instead of inputs) when rebuilding blocks
@@ -200,6 +205,7 @@ OPCODE_FIELDS: Dict[str, set] = {
     "event_whengreaterthan": {"WHENGREATERTHANMENU"},
     "event_whenbroadcastreceived": {"BROADCAST_OPTION"},
     "control_stop": {"STOP_OPTION"},
+    "control_for_each": {"VARIABLE"},
     "looks_backdropnumbername": {"NUMBER_NAME"},
     "looks_costumenumbername": {"NUMBER_NAME"},
     "looks_costume": {"COSTUME"},
@@ -242,7 +248,7 @@ OPCODE_FIELDS: Dict[str, set] = {
     "argument_reporter_boolean": {"VALUE"},
 }
 
-CONTROL_BLOCKS = {"control_forever", "control_repeat", "control_repeat_until", "control_if", "control_if_else"}
+CONTROL_BLOCKS = {"control_forever", "control_repeat", "control_repeat_until", "control_if", "control_if_else", "control_while", "control_for_each", "control_all_at_once"}
 
 MATH_OPERATORS = {
     "abs",

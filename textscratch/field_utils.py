@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from .diagnostics import DiagnosticContext
 from .parsed_node import ParsedNode
-from .string_utils import strip_wrappers
+from .string_utils import strip_wrappers, unescape_text
 from .utils import gen_id
 
 
@@ -66,12 +66,16 @@ def resolve_field_value(
     line_number: Optional[int] = None,
 ) -> List[Any]:
     """Resolve a field value, handling variables, lists, and broadcasts."""
-    value = strip_wrappers(raw_value)
+    value = strip_wrappers(raw_value, strip_inner=False)
+    global_scope = field_name in {"VARIABLE", "LIST"} and value.endswith(" :: global")
+    if global_scope:
+        value = value[:-len(" :: global")]
+    value = unescape_text(value)
     if field_name == "VARIABLE":
-        vid = resolve_variable_id(value, local_vars, global_vars, diag_ctx, line_number)
+        vid = resolve_variable_id(value, {} if global_scope else local_vars, global_vars, diag_ctx, line_number)
         return [value, vid]
     if field_name == "LIST":
-        lid = resolve_list_id(value, local_lists, global_lists, diag_ctx, line_number)
+        lid = resolve_list_id(value, {} if global_scope else local_lists, global_lists, diag_ctx, line_number)
         return [value, lid]
     if field_name == "BROADCAST_OPTION":
         bid = broadcast_ids.setdefault(value, gen_id("broadcast"))
@@ -92,7 +96,7 @@ def build_menu_shadow_input(opcode: str, field_name: str, raw_value: str) -> Par
     cleaned = strip_wrappers(raw_value)
     if cleaned.endswith(" v"):
         cleaned = cleaned[: -len(" v")].strip()
-    cleaned = normalize_menu_field_value(opcode, field_name, cleaned)
+    cleaned = normalize_menu_field_value(opcode, field_name, unescape_text(cleaned))
     menu = ParsedNode(opcode)
     menu.fields = {field_name: [cleaned, None]}
     menu.mutation = {}

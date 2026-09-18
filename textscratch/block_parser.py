@@ -14,9 +14,15 @@ from .parsed_node import ParsedNode
 from .procedure_utils import (
     build_procedure_call_pattern,
     is_space_separated_proccode,
-    match_space_separated_call,
 )
-from .string_utils import strip_wrappers
+from .string_utils import (
+    escape_text,
+    match_parts,
+    strip_line_comment,
+    strip_wrappers,
+    top_level_positions,
+    unescape_text,
+)
 from .utils import gen_id
 
 
@@ -94,20 +100,32 @@ def parse_line_to_node(
 ) -> Optional[ParsedNode]:
     """Parse a single line of scratchblocks text into a ParsedNode."""
     # Import here to avoid circular dependency
-    from .input_builder import build_key_option_input, parse_inline_expression
+    from .input_builder import parse_inline_expression
     from .field_utils import build_menu_shadow_input
 
     if line.startswith("define "):
-        content = line[len("define ") :]
+        content = strip_line_comment(line[len("define ") :])
         warp_flag = content.endswith(" #norefresh")
         if warp_flag:
             content = content[: -len(" #norefresh")]
 
         arg_names: List[str] = []
-        for match in re.finditer(r"\((.*?)\)|\{(.*?)\}", content):
-            arg = match.group(1) if match.group(1) is not None else match.group(2)
-            arg_names.append(arg)
-        base = re.sub(r"\(.*?\)|\{.*?\}", "%s", content).strip()
+        arg_types: List[str] = []
+        boundaries = list(top_level_positions(content))
+        pieces = []
+        start = 0
+        for pos, end in zip(boundaries, boundaries[1:]):
+            if content[pos:pos + 1] in {"(", "{", "<"}:
+                pieces.append(content[start:pos])
+                token = content[pos:end]
+                boolean = token.startswith("<") or token.startswith("{<")
+                name = token[2:-2] if token.startswith("{<") else token[1:-1]
+                arg_names.append(unescape_text(name))
+                arg_types.append("%b" if boolean else "%s")
+                pieces.append(arg_types[-1])
+                start = end
+        pieces.append(content[start:])
+        base = unescape_text("".join(pieces).strip())
         existing = procedure_defs.get(base)
         if existing:
             info = existing
@@ -130,6 +148,7 @@ def parse_line_to_node(
             info = {
                 "proccode": base,
                 "arg_names": arg_names,
+                "arg_types": arg_types,
                 "arg_ids": arg_ids,
                 "warp": warp_flag,
             }
@@ -149,7 +168,15 @@ def parse_line_to_node(
         node.procedure_info = info
         return node
 
-    line_first_token = line.split()[0] if line.split() else ""
+    if re.fullmatch(r"\(.* :: (variables|list)( global)?\)", line):
+        value = build_input_value(line, "VALUE", broadcast_ids, True, procedure_defs,
+                                  local_vars, global_vars, local_lists, global_lists, procedure_args)
+        kind, name, variable_id = value[1]
+        field = "VARIABLE" if kind == 12 else "LIST"
+        return ParsedNode("data_variable" if kind == 12 else "data_listcontents",
+                          fields={field: [name, variable_id]})
+
+    line_first_token = unescape_text(line.split()[0]) if line.split() else ""
     split_markers = ["(", "{"]
     split_pos = len(line)
     for marker in split_markers:
@@ -166,16 +193,13 @@ def parse_line_to_node(
                 continue
             seen.add(marker)
 
-            args: Optional[Tuple[str, ...]] = None
-            if info.get("space_separated"):
-                space_args = match_space_separated_call(line, info)
-                if space_args:
-                    args = tuple(space_args)
-
-            if args is None:
-                match = info["call_pattern"].match(line)
-                if match:
-                    args = match.groups()
+            literals = re.split(r"%[sb]", info["proccode"])
+            if info["arg_ids"]:
+                args = match_parts(line, [escape_text(part) for part in literals])
+                if args is None:
+                    args = match_parts(line, literals)
+            else:
+                args = [] if unescape_text(line) == info["proccode"] else None
 
             if args is None:
                 continue
@@ -187,13 +211,15 @@ def parse_line_to_node(
                 "proccode": info["proccode"],
                 "argumentids": json.dumps(info["arg_ids"]),
                 "argumentnames": json.dumps(info["arg_names"]),
-                "argumentdefaults": json.dumps(["" for _ in info["arg_names"]]),
+                "argumentdefaults": json.dumps([False if t == "%b" else "" for t in info.get("arg_types", ["%s"] * len(info["arg_names"]))]),
                 "warp": "true" if info.get("warp") else "false",
             }
             node.inputs = {}
             for idx, val in enumerate(args):
                 if idx < len(info["arg_ids"]):
                     arg_id = info["arg_ids"][idx]
+                    if info.get("arg_types", ["%s"] * len(args))[idx] == "%b" and val in {"[]", "<>"}:
+                        continue
                     node.inputs[arg_id] = build_input_value(
                         val,
                         arg_id,
@@ -227,6 +253,14 @@ def parse_line_to_node(
     if node:
         return node
 
+    if line.startswith("//"):
+        return None
+    for pos in top_level_positions(line):
+        if line.startswith("//", pos):
+            return parse_line_to_node(line[:pos].rstrip(), procedure_defs, local_vars, global_vars,
+                                      local_lists, global_lists, broadcast_ids, procedure_index,
+                                      procedure_args, diag_ctx, line_number)
+
     inline_node = parse_inline_expression(
         line,
         procedure_defs,
@@ -241,6 +275,11 @@ def parse_line_to_node(
         return inline_node
 
     opcode, groups = match_opcode_line(line, allow_menu_only=False)
+    if opcode == "data_variable":
+        name = unescape_text(groups["VARIABLE"])
+        if name in local_lists or name in global_lists:
+            if name not in local_vars and name not in global_vars:
+                opcode, groups = "data_listcontents", {"LIST": groups["VARIABLE"]}
     if opcode:
         # Disambiguate effect blocks (looks vs sound) based on effect name
         opcode, groups = disambiguate_effect_opcode(opcode, groups)
@@ -257,9 +296,6 @@ def parse_line_to_node(
         fields: Dict[str, Any] = {}
 
         for name, value in groups.items():
-            if opcode == "sensing_keypressed" and name == "KEY_OPTION":
-                inputs[name] = build_key_option_input(value)
-                continue
             if opcode in {"event_whenkeypressed", "sensing_keyoptions"} and name == "KEY_OPTION":
                 fields[name] = resolve_field_value(
                     name,
@@ -280,7 +316,7 @@ def parse_line_to_node(
             # Handle motion block menu inputs (TO for goto/glideto, TOWARDS for pointtowards)
             # Only create menu shadows if the value looks like a menu, not a reporter
             if opcode in ("motion_goto", "motion_glideto") and name == "TO" and is_menu_value(value):
-                inputs[name] = build_menu_shadow_input("motion_goto_menu", "TO", value)
+                inputs[name] = build_menu_shadow_input("motion_glideto_menu" if opcode == "motion_glideto" else "motion_goto_menu", "TO", value)
                 continue
             if opcode == "motion_pointtowards" and name == "TOWARDS" and is_menu_value(value):
                 inputs[name] = build_menu_shadow_input("motion_pointtowards_menu", "TOWARDS", value)
@@ -314,7 +350,11 @@ def parse_line_to_node(
                     line_number,
                 )
 
-        return ParsedNode(opcode, inputs=inputs, fields=fields)
+        node = ParsedNode(opcode, inputs=inputs, fields=fields)
+        if opcode == "control_stop":
+            node.mutation = {"tagName": "mutation", "children": [],
+                             "hasnext": "true" if fields["STOP_OPTION"][0] == "other scripts in sprite" else "false"}
+        return node
 
     fallback_node = try_procedure_candidates(fallback_candidates)
     if fallback_node:
@@ -345,7 +385,7 @@ def parse_block_list(
     procedure_args: Optional[Dict[str, str]],
     diag_ctx: Optional[DiagnosticContext] = None,
 ) -> Tuple[List[ParsedNode], int, bool]:
-    """Parse a list of block lines into ParsedNodes, handling nesting.
+    """Parse block lines, using explicit end/else markers for nesting.
     
     Args:
         lines: List of (indent_level, line_text, line_number) tuples.
@@ -367,23 +407,26 @@ def parse_block_list(
     nodes: List[ParsedNode] = []
     hit_else = False
     active_proc_args = dict(procedure_args) if procedure_args else None
+    terminated = False
 
     while idx < len(lines):
         current_indent, text, line_num = lines[idx]
-        if current_indent < indent:
-            if text == "else" and current_indent == indent - 1:
-                hit_else = True
-                idx += 1
-            break
+        if strip_line_comment(text) in {"else", "end"}:
+            text = strip_line_comment(text)
         if text == "else":
+            if indent == 0 and diag_ctx:
+                diag_ctx.error("Unexpected else outside an if block", line_num)
             hit_else = True
+            terminated = True
             idx += 1
             break
 
         if text == "end":
+            if indent == 0 and diag_ctx:
+                diag_ctx.error("Unexpected end outside a control block", line_num)
+            terminated = True
             idx += 1
-            # Skip explicit terminators; indentation already tells us when to stop.
-            continue
+            break
 
         node = parse_line_to_node(
             text,
@@ -455,4 +498,6 @@ def parse_block_list(
 
         nodes.append(node)
 
+    if indent > 0 and not terminated and diag_ctx:
+        diag_ctx.error("Missing end for control block", lines[-1][2] if lines else None)
     return nodes, idx, hit_else

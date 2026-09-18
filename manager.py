@@ -548,6 +548,13 @@ class Manager:
             raise ManagerError(f"Sprite already exists: {dest_name}")
         
         shutil.copytree(src_path, dest_path)
+        # Imported variable IDs belong to the source sprite. Allocate fresh IDs
+        # when the copy is compiled, including for its monitors.
+        variables_path = os.path.join(dest_path, "variables.json")
+        variables = load_json_file(variables_path, {"variables": [], "lists": []})
+        for entry in variables.get("variables", []) + variables.get("lists", []):
+            entry.pop("id", None)
+        write_json_file(variables_path, variables)
         
         # Update layer in the copy
         existing_sprites = list_sprite_names(self.project_path)
@@ -1131,7 +1138,7 @@ class Manager:
         
         # Handle monitor position
         if monitor_x is not None or monitor_y is not None:
-            if "monitor" not in target:
+            if target.get("monitor") is None:
                 target["monitor"] = {}
             if monitor_x is not None:
                 target["monitor"]["x"] = monitor_x
