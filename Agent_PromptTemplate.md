@@ -1,0 +1,5 @@
+If using an AI agent with this toolchain, copy the following at the top of your prompt for greatly increased performance.
+
+```md
+We're using the Textscratch toolchain, read the README FULLY (except the block list may be skipped, but it is highly recommended to read in case there are new blocks not in your knowledge ) to find out how it works. DO NOT read any python files, most of them are extremely lengthy and also not necessary for the task, as how to use them both as a CLI and as a python module for programmatic management is explained in detail in the README. It is also highly recommended not to read any json files, since they may be hundreds of thousands of lines in length and hard to decode, and instead use manager.py's list functionality as described in the README. RTC.md may be read, it's only 250 lines, and helpful for optimization and efficient programming/suggestions. Here is the task to complete:
+```
